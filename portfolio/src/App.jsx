@@ -8,7 +8,7 @@ const riskZones = [
   
   { lat: 19.051, lng: 72.890, radius: 200, level: "High" },
   { lat: 19.048, lng: 72.898, radius: 250, level: "Moderate" },
-  { lat: 19.046, lng: 72.892, radius: 150, level: "High" }
+  { lat: 19.0493847, lng: 72.8941718, radius: 150, level: "High" }
 ];
 
 const riskColors = {
