@@ -1,23 +1,22 @@
 import React, { useEffect, useState } from "react";
-import { MapContainer, TileLayer, Marker,useMap, Circle, Polyline } from "react-leaflet";
+import { MapContainer, TileLayer, Marker, useMap, Circle, Polyline } from "react-leaflet";
 import L from "leaflet";
 import "leaflet/dist/leaflet.css";
 
 // Risk zones
 const riskZones = [
-  
   { lat: 19.051, lng: 72.890, radius: 200, level: "High" },
   { lat: 19.048, lng: 72.898, radius: 250, level: "Moderate" },
-  { lat: 19.0493847, lng: 72.8941718, radius: 150, level: "High" }
+  { lat: 19.0493847, lng: 72.8941718, radius: 150, level: "Very High" },
 ];
 
 const riskColors = {
   "Very High": "red",
   High: "orange",
-  Moderate: "yellow"
+  Moderate: "yellow",
 };
 
-// Zoom to user component
+// Zoom to user
 const ZoomToUser = ({ position }) => {
   const map = useMap();
   useEffect(() => {
@@ -31,7 +30,7 @@ function App() {
   const [inRiskZone, setInRiskZone] = useState(false);
   const [userTrail, setUserTrail] = useState([]);
 
-  // Watch position
+  // Watch user position
   useEffect(() => {
     const watchId = navigator.geolocation.watchPosition(
       (pos) => {
@@ -65,20 +64,23 @@ function App() {
   };
 
   return (
-    <div className="w-full h-screen flex flex-col">
-      {/* ALERT DIV */}
+    <div className="w-full h-screen flex flex-col items-center justify-start bg-gray-100 p-4 space-y-4">
+      {/* ALERT BAR */}
       <div
-  className={`w-full h-25 text-white text-center p-10 font-bold text-2xl mt-3 mx-auto rounded ${
-    inRiskZone ? "bg-red-600" : "bg-green-600"
-  }`}
->
-  {inRiskZone ? "⚠️ You are inside a risk zone!" : "✅ You are in a safe zone!"}
-</div>
+        className={`w-full max-w-2xl text-center py-4 rounded-lg font-bold text-lg shadow-md ${
+          inRiskZone ? "bg-red-600 text-white" : "bg-green-600 text-white"
+        }`}
+      >
+        {inRiskZone ? "⚠️ You are inside a risk zone!" : "✅ You are in a safe zone!"}
+      </div>
 
-
-      {/* MAP DIV */}
-      <div className="flex-1">
-        <MapContainer center={[19.0493847, 72.8941718]} zoom={15} style={{ height: "100%", width: "100%" }}>
+      {/* MAP CONTAINER */}
+      <div className="w-full max-w-2xl flex-1 rounded-lg overflow-hidden shadow-lg">
+        <MapContainer
+          center={[19.0493847, 72.8941718]}
+          zoom={15}
+          style={{ height: "800px", width: "100%" }}
+        >
           <TileLayer url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png" />
 
           {riskZones.map((zone, i) => (
@@ -96,19 +98,19 @@ function App() {
 
           {userPosition && <ZoomToUser position={userPosition} />}
         </MapContainer>
-      </div>
 
-      {/* INFO PANEL */}
-      {userPosition && (
-        <div className="absolute bottom-4 left-4 bg-white p-3 rounded shadow-lg z-50">
-          <p>
-            <strong>Nearest risk zone distance:</strong> {nearestZoneDistance()} meters
-          </p>
-          <p>
-            <strong>Trail points recorded:</strong> {userTrail.length}
-          </p>
-        </div>
-      )}
+        {/* INFO PANEL OVER MAP */}
+        {userPosition && (
+          <div className="absolute bottom-4 left-1/2 transform -translate-x-1/2 bg-neutral-700 p-10 max-w-2xl w-full h-49 rounded-lg shadow-md text-white font-medium space-y-1 text-center">
+            <p>
+              <strong>Nearest risk zone distance:</strong> {nearestZoneDistance()} meters
+            </p>
+            <p>
+              <strong>Trail points recorded:</strong> {userTrail.length}
+            </p>
+          </div>
+        )}
+      </div>
     </div>
   );
 }
