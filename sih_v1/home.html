@@ -1,0 +1,251 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Disaster Cluster Analysis - Geofencing</title>
+<link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.css"/>
+<link rel="stylesheet" href="https://unpkg.com/leaflet.markercluster@1.5.3/dist/MarkerCluster.Default.css"/>
+<style>
+  body { margin:0; padding:0; }
+  #map { width: 100%; height: 100vh; }
+  .legend {
+      position: fixed;
+      bottom: 50px;
+      left: 50px;
+      background: white;
+      padding: 15px;
+      border: 2px solid grey;
+      border-radius: 5px;
+      box-shadow: 0 0 10px rgba(0,0,0,0.3);
+      font-size: 12px;
+      z-index: 999;
+  }
+  .legend h4 { margin-top: 0; }
+  .legend ul { margin: 5px 0; padding-left: 20px; font-size: 11px; }
+</style>
+</head>
+<body>
+
+<div id="map"></div>
+<div class="legend">
+<h4>🗺️ Disaster Cluster Analysis</h4>
+<ul>
+  <li>Total Events: <span id="totalEvents">0</span></li>
+  <li>🏔️ Landslides: <span id="totalLandslides">0</span></li>
+  <li>⚠️ Other Disasters: <span id="totalOther">0</span></li>
+  <li>Clusters Found: <span id="totalClusters">0</span></li>
+  <li>Circular Zones: <span id="totalZones">0</span></li>
+</ul>
+<p style="font-size:10px; color:#666; background:#f0f0f0; padding:5px; border-radius:3px;">
+Tip: Click on zones and points for details
+</p>
+</div>
+
+<script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+<script src="https://unpkg.com/leaflet.markercluster@1.5.3/dist/leaflet.markercluster.js"></script>
+
+<script>
+// === Helper functions ===
+async function loadGeoJSON(url) {
+    const resp = await fetch(url);
+    return await resp.json();
+}
+
+function haversineDistance(a, b) {
+    const R = 6371; // km
+    const dLat = (b.lat - a.lat) * Math.PI/180;
+    const dLon = (b.lon - a.lon) * Math.PI/180;
+    const lat1 = a.lat * Math.PI/180;
+    const lat2 = b.lat * Math.PI/180;
+    const x = dLat;
+    const y = dLon * Math.cos((lat1 + lat2)/2);
+    return Math.sqrt(x*x + y*y) * R;
+}
+
+function extractPoints(geojson, sourceName) {
+    const points = [];
+    for(const feature of geojson.features) {
+        const geom = feature.geometry;
+        let lat, lon, type='other';
+        if(geom.type==='Point'){
+            [lon, lat] = geom.coordinates;
+            type = sourceName.includes("Landslide") ? 'landslide' : 'other';
+        } else if(geom.type==='Polygon' || geom.type==='MultiPolygon'){
+            const coords = geom.type==='Polygon'? geom.coordinates[0] : geom.coordinates[0][0];
+            const lats = coords.map(c=>c[1]);
+            const lons = coords.map(c=>c[0]);
+            lat = lats.reduce((a,b)=>a+b,0)/lats.length;
+            lon = lons.reduce((a,b)=>a+b,0)/lons.length;
+            type = 'landslide';
+        }
+        points.push({
+            lat, lon, type, source: sourceName,
+            state: feature.properties?.STATE || 'N/A',
+            district: feature.properties?.DISTRICT || 'N/A',
+            slide_no: feature.properties?.SLIDE_NO || 'N/A'
+        });
+    }
+    return points;
+}
+
+function isInsideCircle(userLat, userLon, circleLat, circleLon, radiusMeters) {
+    const R = 6371000;
+    const dLat = (circleLat - userLat) * Math.PI/180;
+    const dLon = (circleLon - userLon) * Math.PI/180;
+    const lat1 = userLat * Math.PI/180;
+    const lat2 = circleLat * Math.PI/180;
+    const a = Math.sin(dLat/2)**2 + Math.cos(lat1)*Math.cos(lat2)*Math.sin(dLon/2)**2;
+    const c = 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1-a));
+    const distance = R * c;
+    return distance <= radiusMeters;
+}
+
+function sendAlertToDashboard(clusterId, lat, lon) {
+    console.log(`[ALERT] User entered cluster ${clusterId}: (${lat.toFixed(5)}, ${lon.toFixed(5)})`);
+    // API call example (uncomment and configure)
+    /*
+    fetch('https://your-police-dashboard-api.com/alert', {
+        method: 'POST',
+        headers: {'Content-Type':'application/json'},
+        body: JSON.stringify({clusterId, lat, lon, timestamp: new Date().toISOString()})
+    }).then(res=>res.json())
+      .then(data=>console.log('API response:', data))
+      .catch(err=>console.error('API error:', err));
+    */
+}
+
+// === Main function ===
+async function main() {
+    const resultData = await loadGeoJSON('result.geojson');
+    const landslideData = await loadGeoJSON('Landslide Point.geojson');
+
+    const disasterPoints = [
+        ...extractPoints(resultData, 'result.geojson'),
+        ...extractPoints(landslideData, 'Landslide Point.geojson')
+    ];
+
+    const avgLat = disasterPoints.reduce((sum, p) => sum + p.lat, 0) / disasterPoints.length || 20;
+    const avgLon = disasterPoints.reduce((sum, p) => sum + p.lon, 0) / disasterPoints.length || 75;
+
+    const map = L.map('map').setView([avgLat, avgLon], 6);
+    L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {maxZoom:18, attribution:'&copy; OSM'}).addTo(map);
+
+    // DBSCAN-like clustering
+    const epsilonKm = 2.5;
+    const minPoints = 2;
+    const labels = new Array(disasterPoints.length).fill(-1);
+    let clusterId = 0;
+
+    for(let i=0;i<disasterPoints.length;i++){
+        if(labels[i]!=-1) continue;
+        const cluster = [];
+        for(let j=0;j<disasterPoints.length;j++){
+            if(haversineDistance(disasterPoints[i], disasterPoints[j]) <= epsilonKm) cluster.push(j);
+        }
+        if(cluster.length>=minPoints){
+            for(const idx of cluster) labels[idx]=clusterId;
+            clusterId++;
+        }
+    }
+
+    // Group clusters
+    const clusterMap = {};
+    for(let i=0;i<labels.length;i++){
+        const label = labels[i];
+        if(label==-1) continue;
+        if(!clusterMap[label]) clusterMap[label]=[];
+        clusterMap[label].push(i);
+    }
+
+    // Add circular zones & save for geofencing
+    let zonesCreated = 0;
+    const clusterZones = [];
+    for(const [cId, indices] of Object.entries(clusterMap)){
+        if(indices.length<5) continue;
+        const lats = indices.map(i=>disasterPoints[i].lat);
+        const lons = indices.map(i=>disasterPoints[i].lon);
+        const centerLat = lats.reduce((a,b)=>a+b,0)/lats.length;
+        const centerLon = lons.reduce((a,b)=>a+b,0)/lons.length;
+        const maxDist = Math.max(...indices.map(i=>haversineDistance({lat:centerLat,lon:centerLon}, disasterPoints[i])));
+        const radius = maxDist*1.2*1000;
+
+        L.circle([centerLat, centerLon], {
+            radius: radius,
+            color: 'red',
+            fillColor: 'red',
+            fillOpacity: 0.2,
+            weight:2
+        }).bindPopup(`<b>Cluster ${cId}</b><br>Size: ${indices.length} events<br>Radius: ${(radius/1000).toFixed(2)} km`).addTo(map);
+
+        clusterZones.push({clusterId:cId, lat:centerLat, lon:centerLon, radius, size: indices.length});
+        zonesCreated++;
+    }
+
+    // Track user location every 30 seconds and log {x, y, isSafe}
+    if (navigator.geolocation) {
+        const userMarker = L.circleMarker([0,0], {
+            radius: 8,
+            color: 'blue',
+            fillColor: 'blue',
+            fillOpacity: 0.8
+        }).addTo(map);
+
+        const alertedClusters = new Set();
+
+        async function updateUserLocation() {
+            navigator.geolocation.getCurrentPosition(pos => {
+                const userLat = pos.coords.latitude;
+                const userLon = pos.coords.longitude;
+                userMarker.setLatLng([userLat, userLon]);
+
+                let isSafe = true;
+
+                clusterZones.forEach(zone => {
+                    const inside = isInsideCircle(userLat, userLon, zone.lat, zone.lon, zone.radius);
+
+                    if(inside){
+                        isSafe = false;
+                        if(!alertedClusters.has(zone.clusterId)){
+                            sendAlertToDashboard(zone.clusterId, userLat, userLon);
+                            alertedClusters.add(zone.clusterId);
+                        }
+                    } else if(alertedClusters.has(zone.clusterId)){
+                        alertedClusters.delete(zone.clusterId);
+                    }
+                });
+
+                console.log({
+                    x: userLat.toFixed(5),
+                    y: userLon.toFixed(5),
+                    isSafe
+                });
+
+            }, err => {
+                console.error('Geolocation error:', err);
+            }, {enableHighAccuracy:true});
+        }
+
+        // Initial call
+        updateUserLocation();
+        // Update every 30 seconds
+        setInterval(updateUserLocation, 30000);
+
+    } else {
+        alert("Geolocation is not supported by your browser.");
+    }
+
+    // Update legend
+    document.getElementById('totalEvents').textContent = disasterPoints.length;
+    const totalLandslides = disasterPoints.filter(p=>p.type==='landslide').length;
+    document.getElementById('totalLandslides').textContent = totalLandslides;
+    document.getElementById('totalOther').textContent = disasterPoints.length - totalLandslides;
+    document.getElementById('totalClusters').textContent = clusterId;
+    document.getElementById('totalZones').textContent = zonesCreated;
+}
+
+main();
+</script>
+</body>
+</html>
